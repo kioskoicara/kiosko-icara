@@ -210,6 +210,7 @@ export default function KioskoIcara() {
   const [now, setNow] = useState(Date.now());
   const [config, setConfig] = useState(null);
   const [configLoading, setConfigLoading] = useState(true);
+  const [awaitingPayment, setAwaitingPayment] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -222,6 +223,68 @@ export default function KioskoIcara() {
         setConfigLoading(false);
       }
     })();
+  }, []);
+
+  // Vuelta desde la página de pago de Stripe (éxito o cancelación).
+  // La app se recarga entera al volver, así que recuperamos el
+  // pedido (o el carrito) según lo que dejamos guardado antes de irnos.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pago = params.get("pago");
+    const orderId = params.get("pedido");
+    if (!pago || !orderId) return;
+
+    const cleanUrl = () => window.history.replaceState(null, "", window.location.pathname);
+
+    if (pago === "cancelado") {
+      fetch("/api/cancel-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId }),
+      }).catch(() => {});
+      try {
+        const draft = JSON.parse(sessionStorage.getItem("icara_draft") || "null");
+        if (draft) {
+          setCart(draft.cart || {});
+          setName(draft.name || "");
+          setEmail(draft.email || "");
+          setPayMethod(draft.payMethod || "tarjeta");
+        }
+      } catch {}
+      setView("checkout");
+      cleanUrl();
+      alert("Has cancelado el pago. Tu pedido sigue aquí por si quieres intentarlo de nuevo.");
+      return;
+    }
+
+    if (pago === "exito") {
+      setAwaitingPayment(true);
+      let attempts = 0;
+      const poll = async () => {
+        attempts += 1;
+        try {
+          const rows = await supaRequest(`pedidos?order_id=eq.${encodeURIComponent(orderId)}&select=*`);
+          const row = rows?.[0];
+          if (row && row.status !== "pendiente_pago") {
+            setConfirmedOrder(orderFromRow(row));
+            setView("confirmacion");
+            setAwaitingPayment(false);
+            sessionStorage.removeItem("icara_draft");
+            cleanUrl();
+            return;
+          }
+        } catch {}
+        if (attempts < 12) {
+          setTimeout(poll, 1500);
+        } else {
+          setAwaitingPayment(false);
+          cleanUrl();
+          alert("Tu pago se ha recibido, pero está tardando en confirmarse. Consulta tu correo en unos minutos, o pide en \"Equipo Ícara\" que busquen tu código.");
+        }
+      };
+      poll();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const saveConfig = async (nextConfig) => {
@@ -263,35 +326,30 @@ export default function KioskoIcara() {
     setPaying(true);
     try {
       const dKey = dateKey(targetDate);
-      // pequeña simulación de pasarela de pago (Bizum / tarjeta)
-      await new Promise((r) => setTimeout(r, 1400));
 
-      const existing = await supaRequest(`pedidos?date=eq.${dKey}&select=order_id`);
-      const nextNum = (existing?.length || 0) + 1;
-      const code = `IC-${String(nextNum).padStart(3, "0")}`;
-      const orderId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      // Guardamos el carrito por si el alumno cancela el pago y vuelve.
+      sessionStorage.setItem(
+        "icara_draft",
+        JSON.stringify({ cart, name, email, payMethod })
+      );
 
-      const order = {
-        orderId,
-        code,
-        date: dKey,
-        name: name.trim(),
-        email: email.trim(),
-        items: cartItems.map(({ id, name, price, qty }) => ({ id, name, price, qty })),
-        total,
-        payMethod,
-        status: "pendiente",
-        createdAt: Date.now(),
-      };
+      const res = await fetch("/api/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: cartItems.map(({ id, name, qty }) => ({ id, name, qty })),
+          name,
+          email,
+          date: dKey,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error || "No se ha podido iniciar el pago");
 
-      await supaRequest("pedidos", { method: "POST", body: orderToRow(order), prefer: "return=minimal" });
-
-      setConfirmedOrder(order);
-      setView("confirmacion");
-      setCart({});
+      // Llevamos al alumno a la página de pago real de Stripe.
+      window.location.href = data.url;
     } catch (e) {
       alert("No se ha podido procesar el pedido. Inténtalo de nuevo.");
-    } finally {
       setPaying(false);
     }
   };
@@ -305,13 +363,16 @@ export default function KioskoIcara() {
 
   const cancelOrder = async () => {
     if (!confirmedOrder) return;
-    const updated = { ...confirmedOrder, status: "cancelado" };
-    await supaRequest(`pedidos?order_id=eq.${encodeURIComponent(confirmedOrder.orderId)}`, {
-      method: "PATCH",
-      body: { status: "cancelado" },
-      prefer: "return=minimal",
+    const res = await fetch("/api/cancel-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderId: confirmedOrder.orderId }),
     });
-    setConfirmedOrder(updated);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "No se ha podido cancelar el pedido");
+    }
+    setConfirmedOrder({ ...confirmedOrder, status: "cancelado" });
   };
 
   return (
@@ -327,8 +388,12 @@ export default function KioskoIcara() {
         )}
       </header>
 
-      {configLoading ? (
-        <div className="screen center"><div className="hint">Cargando kiosko…</div></div>
+      {configLoading || awaitingPayment ? (
+        <div className="screen center">
+          <div className="hint">
+            {awaitingPayment ? "Confirmando tu pago…" : "Cargando kiosko…"}
+          </div>
+        </div>
       ) : (
         <>
           {view === "menu" && (
@@ -631,23 +696,17 @@ function CheckoutView({ targetDate, cartItems, total, name, setName, email, setE
       </label>
 
       <div className="pay-methods">
-        <button
-          className={"pay-opt" + (payMethod === "tarjeta" ? " pay-opt-active" : "")}
-          onClick={() => setPayMethod("tarjeta")}
-        >
+        <button className="pay-opt pay-opt-active" disabled>
           <CreditCard size={18} /> Tarjeta
         </button>
-        <button
-          className={"pay-opt" + (payMethod === "bizum" ? " pay-opt-active" : "")}
-          onClick={() => setPayMethod("bizum")}
-        >
-          <Smartphone size={18} /> Bizum
+        <button className="pay-opt" disabled title="Disponible cuando la cuenta de Stripe esté verificada">
+          <Smartphone size={18} /> Bizum (próximamente)
         </button>
       </div>
-      <p className="hint">Modo demostración — el pago se simula, no se realiza ningún cargo real.</p>
+      <p className="hint">Pago con tarjeta a través de Stripe — en modo de prueba no se realiza ningún cargo real.</p>
 
       <button className="btn-primary btn-wide" disabled={!canPay || paying} onClick={onPay}>
-        {paying ? <><Loader2 size={16} className="spin" /> Procesando pago…</> : <>Pagar {eur(total)}</>}
+        {paying ? <><Loader2 size={16} className="spin" /> Conectando con Stripe…</> : <>Pagar {eur(total)}</>}
       </button>
     </div>
   );
