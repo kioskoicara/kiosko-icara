@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/send-daily-prep-pdf",
+      "schedule": "15 23 * * *"
+    }
+  ]
+}
