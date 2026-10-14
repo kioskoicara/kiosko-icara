@@ -3,7 +3,7 @@
    Estas funciones corren en Vercel, nunca en el navegador, así
    que aquí sí se puede usar la "service role key" de Supabase
    (tiene permiso total y salta las reglas de RLS) y la clave
-   secreta de Stripe.
+   secreta de la pasarela de pago.
 --------------------------------------------------------- */
 import { madridDateKey, pickupDateKey } from "../shared/school-calendar.js";
 
