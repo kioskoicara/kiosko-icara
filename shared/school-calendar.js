@@ -191,7 +191,6 @@ export function drawPrepPdf(doc, { dateLabel, orders }) {
     doc.setFontSize(12.5);
     doc.text("2. Detalle por pedido", marginX, y);
     y += 9;
-
     const sortedOrders = [...orders].sort((a, b) => String(a.code || "").localeCompare(String(b.code || "")));
     sortedOrders.forEach((o) => {
       const lines = (o.items || []).map((i) => ({
@@ -223,7 +222,4 @@ export function drawPrepPdf(doc, { dateLabel, orders }) {
     });
   }
   return doc;
-}
-  const secsToMidnight = 24 * 3600 - (p.hour * 3600 + p.minute * 60 + p.second);
-  return Math.max(0, ((dayDiff - 1) * 86400 + secsToMidnight) * 1000);
 }
