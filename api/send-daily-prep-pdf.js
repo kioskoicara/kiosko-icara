@@ -1,7 +1,6 @@
 import { jsPDF } from "jspdf";
 import { supaAdmin, madridDateKey, esLongDate, eur } from "./_lib.js";
-import { isSchoolDay } from "../shared/school-calendar.js";
-import { drawPrepPdf } from "../shared/prep-pdf.js";
+import { isSchoolDay, drawPrepPdf } from "../shared/school-calendar.js";
 
 /* ---------------------------------------------------------
    Cada noche (ver vercel.json → "crons"), esta función:
