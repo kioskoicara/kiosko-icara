@@ -14,11 +14,21 @@
 --------------------------------------------------------- */
 
 export const NON_SCHOOL_DATES = [
+  // Curso 2026-2027 (Ronda, Málaga). Provisional: confirmar con el centro.
   "2026-10-12", // Fiesta Nacional de España
+  "2026-11-02", // Todos los Santos (trasladado)
+  "2026-12-07", // Constitución (trasladada)
   "2026-12-08", // Inmaculada Concepción
-  "2027-01-01", // Año Nuevo
-  "2027-01-06", // Reyes
-  "2027-03-26", // Viernes Santo
+  "2027-01-25", // Virgen de la Paz, patrona de Ronda
+  "2027-03-01", // Día de Andalucía (trasladado)
+  "2027-05-03", // día no lectivo por fiesta local (a confirmar con el centro)
+];
+
+// Vacaciones: rangos de fechas, ambos extremos incluidos.
+export const NON_SCHOOL_RANGES = [
+  ["2026-12-23", "2027-01-06"], // Navidad
+  ["2027-02-22", "2027-02-26"], // Semana Blanca (incluye Día de la Comunidad Educativa, 26/2)
+  ["2027-03-22", "2027-03-28"], // Semana Santa
 ];
 
 export const TIMEZONE = "Europe/Madrid";
@@ -66,6 +76,7 @@ export function weekday(key) {
 export function isSchoolDay(key) {
   const wd = weekday(key);
   if (wd === 0 || wd === 6) return false;
+  if (NON_SCHOOL_RANGES.some(([from, to]) => key >= from && key <= to)) return false;
   return !NON_SCHOOL_DATES.includes(key);
 }
 
@@ -104,13 +115,28 @@ export function msUntilCutoff(pickupKey, now = new Date()) {
    Recibe un documento jsPDF ya creado, así que este archivo no
    importa nada y vale para navegador y servidor.
 
-   Parte 1: cantidad total de cada producto (qué preparar).
-   Parte 2: detalle por pedido (qué lleva cada código IC-NNN).
+   Parte 1: panes por tamaño (para la panadería).
+   Parte 2: cantidad total de cada producto (qué preparar).
+   Parte 3: detalle por pedido (qué lleva cada código IC-NNN).
 --------------------------------------------------------- */
 
 const eurTxt = (n) => `${Number(n).toFixed(2).replace(".", ",")} €`;
 
-/* orders: [{ code, name, status, total, items: [{name, qty}] }]
+// Panes de los bocadillos: el tamaño va dentro del id de cada línea
+// ("bocbas-peq--jamon-cocido", "bocicara-grande-integral--tortilla"…).
+const BREAD_ORDER = ["peq", "grande", "peq-integral", "grande-integral"];
+const BREAD_LABELS = {
+  peq: "Pequeños",
+  grande: "Grandes",
+  "peq-integral": "Pequeños integrales",
+  "grande-integral": "Grandes integrales",
+};
+function breadSizeOf(id) {
+  const m = /^boc(?:bas|icara)-(.+?)--/.exec(String(id || ""));
+  return m ? m[1] : null;
+}
+
+/* orders: [{ code, name, status, total, items: [{id, name, qty}] }]
    (ya sin cancelados ni pendientes de pago). */
 export function drawPrepPdf(doc, { dateLabel, orders }) {
   const marginX = 18;
@@ -127,6 +153,20 @@ export function drawPrepPdf(doc, { dateLabel, orders }) {
     });
   });
   const totalItemsCount = Object.values(totals).reduce((s, q) => s + q, 0);
+
+  // Panes por tamaño (para el encargado de la panadería).
+  const breads = {};
+  orders.forEach((o) =>
+    (o.items || []).forEach((i) => {
+      const size = breadSizeOf(i.id);
+      if (size) breads[size] = (breads[size] || 0) + i.qty;
+    })
+  );
+  const breadKeys = [
+    ...BREAD_ORDER,
+    ...Object.keys(breads).filter((k) => !BREAD_ORDER.includes(k)),
+  ];
+  const totalBreads = Object.values(breads).reduce((s, q) => s + q, 0);
 
   const ensure = (h) => {
     if (y + h > pageEnd) { doc.addPage(); y = 22; }
@@ -155,11 +195,34 @@ export function drawPrepPdf(doc, { dateLabel, orders }) {
   rule();
   y += 10;
 
-  // Parte 1 — totales por producto
+  // Parte 1 — panes por tamaño
   doc.setTextColor(30, 30, 30);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12.5);
-  doc.text("1. Cantidad total por producto", marginX, y);
+  doc.text("1. Panes para la panadería", marginX, y);
+  y += 9;
+  doc.setFontSize(12);
+  breadKeys.forEach((k) => {
+    ensure(8);
+    doc.setFont("helvetica", "bold");
+    doc.text(String(breads[k] || 0), marginX, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(`×  ${BREAD_LABELS[k] || k}`, marginX + 12, y);
+    y += 8;
+  });
+  ensure(16);
+  y += 1;
+  rule();
+  y += 8;
+  doc.setFont("helvetica", "bold");
+  doc.text(`Total: ${totalBreads} panes`, marginX, y);
+  y += 12;
+
+  // Parte 2 — totales por producto
+  ensure(20);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12.5);
+  doc.text("2. Cantidad total por producto", marginX, y);
   y += 9;
   doc.setFontSize(12);
   const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
@@ -189,8 +252,9 @@ export function drawPrepPdf(doc, { dateLabel, orders }) {
   if (orders.length > 0) {
     ensure(20);
     doc.setFontSize(12.5);
-    doc.text("2. Detalle por pedido", marginX, y);
+    doc.text("3. Detalle por pedido", marginX, y);
     y += 9;
+
     const sortedOrders = [...orders].sort((a, b) => String(a.code || "").localeCompare(String(b.code || "")));
     sortedOrders.forEach((o) => {
       const lines = (o.items || []).map((i) => ({
