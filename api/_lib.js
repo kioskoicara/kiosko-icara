@@ -172,6 +172,13 @@ export function serverPickupDateKey() {
   return pickupDateKey(new Date());
 }
 
+/* Modo "fuera de servicio": ver api/status.js. Se activa desde Vercel
+   con la variable APP_PAUSED=1 y bloquea los pedidos nuevos. */
+export function isAppPaused() {
+  const v = String(process.env.APP_PAUSED || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "si" || v === "sí";
+}
+
 export function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     let data = "";
