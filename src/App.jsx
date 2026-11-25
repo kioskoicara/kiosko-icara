@@ -345,6 +345,23 @@ export default function KioskoIcara() {
   const [configLoading, setConfigLoading] = useState(true);
   const [awaitingPayment, setAwaitingPayment] = useState(false);
   const [acceptedPrivacy, setAcceptedPrivacy] = useState(false);
+  // Modo "fuera de servicio" (se activa desde Vercel, ver api/status.js).
+  const [pausedInfo, setPausedInfo] = useState({ loading: true, paused: false, message: "" });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/status", { cache: "no-store" });
+        const d = await r.json();
+        if (!cancelled) setPausedInfo({ loading: false, paused: !!d.paused, message: d.message || "" });
+      } catch {
+        if (!cancelled) setPausedInfo({ loading: false, paused: false, message: "" });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const outOfService = pausedInfo.paused && (view === "menu" || view === "checkout");
 
   useEffect(() => {
     (async () => {
@@ -553,7 +570,7 @@ export default function KioskoIcara() {
         </div>
       </header>
 
-      {configLoading || awaitingPayment ? (
+      {configLoading || pausedInfo.loading || awaitingPayment ? (
         <div className="screen center">
           <div className="hint">
             {awaitingPayment ? "Confirmando tu pago…" : "Cargando kiosko…"}
@@ -561,7 +578,9 @@ export default function KioskoIcara() {
         </div>
       ) : (
         <>
-          {view === "menu" && (
+          {outOfService && <OutOfServiceView message={pausedInfo.message} />}
+
+          {!outOfService && view === "menu" && (
             <MenuView
               targetDate={targetDate}
               countdown={countdown}
@@ -574,7 +593,7 @@ export default function KioskoIcara() {
             />
           )}
 
-          {view === "checkout" && (
+          {!outOfService && view === "checkout" && (
             <CheckoutView
               targetDate={targetDate}
               cartItems={cartItems}
@@ -606,6 +625,19 @@ export default function KioskoIcara() {
       <footer className="site-footer">
         Centro ícara. Todos los derechos reservados. {new Date().getFullYear()}
       </footer>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   VISTA: FUERA DE SERVICIO
+--------------------------------------------------------- */
+function OutOfServiceView({ message }) {
+  return (
+    <div className="screen center" style={{ textAlign: "center", gap: 12 }}>
+      <AlertTriangle size={40} strokeWidth={1.8} color="#d9704c" />
+      <h1 style={{ margin: 0 }}>Fuera de servicio</h1>
+      <p style={{ maxWidth: 420, margin: 0 }}>{message}</p>
     </div>
   );
 }
