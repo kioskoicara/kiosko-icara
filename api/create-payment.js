@@ -1,4 +1,4 @@
-import { supaAdmin, getMenuConfig, priceForLine, readJsonBody, serverPickupDateKey } from "./_lib.js";
+import { supaAdmin, getMenuConfig, priceForLine, readJsonBody, serverPickupDateKey, isAppPaused } from "./_lib.js";
 import { buildPaymentForm, newRedsysOrder } from "./_redsys.js";
 
 /* Crea el pedido como "pendiente de pago" y devuelve los datos firmados
@@ -9,6 +9,14 @@ export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Método no permitido" });
+  }
+
+  // Modo "fuera de servicio": no se aceptan pedidos nuevos.
+  if (isAppPaused()) {
+    return res.status(503).json({
+      error: process.env.APP_PAUSED_MESSAGE || "Esta app está momentáneamente fuera de servicio. Vuelve a intentarlo más tarde.",
+      code: "FUERA_DE_SERVICIO",
+    });
   }
 
   try {
